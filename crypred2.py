@@ -35,6 +35,45 @@ def decrypt_bytes(encrypted_data: bytes, password: str) -> bytes:
     fernet = Fernet(key)
     return fernet.decrypt(encrypted)
 
+def handle_conflict_and_get_path(directory: str, filename: str) -> str:
+    """
+    Eğer ana dizinde aynı isimde bir dosya zaten varsa;
+    - Var olan (eski) dosyayı 'Arşiv' alt klasörüne name_1, name_2 şeklinde taşır.
+    - Yeni oluşacak dosyanın ana dizine normal adıyla kaydedilmesini sağlar.
+    """
+    target_path = os.path.join(directory, filename)
+    
+    # Eğer bu isimde dosya yoksa direkt ana dizine kaydedilir
+    if not os.path.exists(target_path):
+        return target_path
+        
+    # Aynı isimde dosya varsa, eskisini 'Arşiv' klasörüne taşıyacağız
+    sub_dir = os.path.join(directory, "Arşiv")
+    os.makedirs(sub_dir, exist_ok=True)
+    
+    # Uzantı ve isim ayrıştırma
+    if filename.endswith('.enc'):
+        name_part = filename[:-4]
+        ext = '.enc'
+    else:
+        name_part, ext = os.path.splitext(filename)
+        
+    counter = 1
+    while True:
+        new_name = f"{name_part}_{counter}{ext}"
+        backup_path = os.path.join(sub_dir, new_name)
+        if not os.path.exists(backup_path):
+            break
+        counter += 1
+        
+    # Eski dosyayı bozmadan güvenli bir şekilde Arşiv altına taşı
+    try:
+        os.replace(target_path, backup_path)
+    except Exception as e:
+        raise Exception(f"Eski dosya Arşiv'e taşınırken hata oluştu:\n{e}")
+        
+    return target_path
+
 # --- ARAYÜZ (GUI) TASARIMI ---
 
 ctk.set_appearance_mode("Dark")
@@ -44,7 +83,7 @@ class LocalFolderEncryptorApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Klasör İçi Dosya Şifreleyici")
-        self.geometry("600x550")
+        self.geometry("600x620")
         self.resizable(False, False)
 
         # Çalıştığı dizini tespit et (.exe ve .py uyumlu)
@@ -79,16 +118,23 @@ class LocalFolderEncryptorApp(ctk.CTk):
         self.lbl_info = ctk.CTkLabel(self, text="Şifrelenecek veya çözülecek dosyayı seçin:", text_color="gray")
         self.lbl_info.pack(anchor="w", padx=25, pady=(5, 0))
 
-        self.scroll_frame = ctk.CTkScrollableFrame(self, height=220, label_text="Klasördeki Dosyalar")
+        self.scroll_frame = ctk.CTkScrollableFrame(self, height=180, label_text="Klasördeki Dosyalar")
         self.scroll_frame.pack(padx=20, pady=10, fill="both", expand=True)
 
-        # --- ŞİFRE GİRİŞİ ---
-        self.entry_pwd = ctk.CTkEntry(self, placeholder_text="Şifre Giriniz", show="*", width=350)
-        self.entry_pwd.pack(pady=15)
+        # --- ŞİFRE GİRİŞ ALANLARI ---
+        self.frame_pwd = ctk.CTkFrame(self, fg_color="transparent")
+        self.frame_pwd.pack(pady=5)
+
+        self.entry_pwd = ctk.CTkEntry(self.frame_pwd, placeholder_text="Şifre Giriniz", show="*", width=350)
+        self.entry_pwd.pack(pady=5)
+
+        # Sadece şifrelemede kullanılacak 2. şifre alanı (Çift Doğrulama)
+        self.entry_pwd_confirm = ctk.CTkEntry(self.frame_pwd, placeholder_text="Şifreyi Tekrar Giriniz (Sadece Şifrelemede)", show="*", width=350)
+        self.entry_pwd_confirm.pack(pady=5)
 
         # --- İŞLEM BUTONLARI ---
         self.frame_actions = ctk.CTkFrame(self, fg_color="transparent")
-        self.frame_actions.pack(pady=10)
+        self.frame_actions.pack(pady=15)
 
         self.btn_encrypt = ctk.CTkButton(
             self.frame_actions, 
@@ -123,11 +169,14 @@ class LocalFolderEncryptorApp(ctk.CTk):
             all_items = os.listdir(self.current_dir)
             files = []
 
-            # Kendisini ve sistem dosyalarını korumak için gizleme
+            # Kendisini, sistem dosyalarını ve Arşiv klasörünü gizleme
             ignored_extensions = ('.exe', '.py', '.spec', '.bat', '.cmd')
 
             for item in all_items:
                 full_path = os.path.join(self.current_dir, item)
+                if item == "Arşiv" and os.path.isdir(full_path):
+                    continue
+
                 if os.path.isfile(full_path):
                     if not item.endswith(ignored_extensions):
                         files.append(item)
@@ -158,9 +207,14 @@ class LocalFolderEncryptorApp(ctk.CTk):
     def encrypt_action(self):
         filename = self.selected_file
         password = self.entry_pwd.get()
+        password_confirm = self.entry_pwd_confirm.get()
 
-        if not filename or not password:
-            messagebox.showwarning("Eksik Bilgi", "Lütfen listeden bir dosya seçin ve şifre girin.")
+        if not filename or not password or not password_confirm:
+            messagebox.showwarning("Eksik Bilgi", "Lütfen bir dosya seçin ve her iki şifre alanını da doldurun.")
+            return
+
+        if password != password_confirm:
+            messagebox.showerror("Hata", "Girdiğiniz şifreler birbiriyle uyuşmuyor!")
             return
 
         if filename.endswith('.enc'):
@@ -175,29 +229,27 @@ class LocalFolderEncryptorApp(ctk.CTk):
 
             encrypted_data = encrypt_bytes(data, password)
 
-            new_filename = filename + ".enc"
-            new_file_path = os.path.join(self.current_dir, new_filename)
+            desired_filename = filename + ".enc"
+            target_file_path = handle_conflict_and_get_path(self.current_dir, desired_filename)
 
-            # 1. Yeni şifrelenmiş dosyayı disk üzerine yazıyoruz
-            with open(new_file_path, "wb") as f:
+            with open(target_file_path, "wb") as f:
                 f.write(encrypted_data)
 
-            # 2. Şifreleme ve yazma BAŞARILI olduysa eski orijinal dosyayı siliyoruz
-            os.remove(file_path)
-
-            messagebox.showinfo("Başarılı", f"Dosya şifrelendi ve orijinali silindi:\n{new_filename}")
+            messagebox.showinfo("Başarılı", f"Dosya şifrelendi ve ana klasöre kaydedildi:\n{desired_filename}")
             self.entry_pwd.delete(0, 'end')
+            self.entry_pwd_confirm.delete(0, 'end')
             self.refresh_file_list()
 
         except Exception as e:
-            messagebox.showerror("Hata", f"Şifreleme sırasında hata oluştu (Eski dosya korundu):\n{e}")
+            messagebox.showerror("Hata", f"Şifreleme sırasında hata oluştu:\n{e}")
 
     def decrypt_action(self):
         filename = self.selected_file
         password = self.entry_pwd.get()
 
+        # Şifre çözmede sadece ilk şifre alanı zorunludur
         if not filename or not password:
-            messagebox.showwarning("Eksik Bilgi", "Lütfen listeden şifreli bir dosya seçin ve şifre girin.")
+            messagebox.showwarning("Eksik Bilgi", "Lütfen şifreli bir dosya seçin ve şifre girin.")
             return
 
         file_path = os.path.join(self.current_dir, filename)
@@ -209,25 +261,22 @@ class LocalFolderEncryptorApp(ctk.CTk):
             decrypted_data = decrypt_bytes(data, password)
 
             if filename.endswith('.enc'):
-                new_filename = filename[:-4]
+                desired_filename = filename[:-4]
             else:
-                new_filename = "cozulmus_" + filename
+                desired_filename = "cozulmus_" + filename
 
-            new_file_path = os.path.join(self.current_dir, new_filename)
+            target_file_path = handle_conflict_and_get_path(self.current_dir, desired_filename)
 
-            # 1. Yeni çözülmüş dosyayı yazıyoruz
-            with open(new_file_path, "wb") as f:
+            with open(target_file_path, "wb") as f:
                 f.write(decrypted_data)
 
-            # 2. Şifre çözme ve yazma BAŞARILI olduysa eski .enc uzantılı dosyayı siliyoruz
-            os.remove(file_path)
-
-            messagebox.showinfo("Başarılı", f"Dosya şifresi çözüldü ve şifreli dosya silindi:\n{new_filename}")
+            messagebox.showinfo("Başarılı", f"Dosya şifresi çözüldü ve ana klasöre kaydedildi:\n{desired_filename}")
             self.entry_pwd.delete(0, 'end')
+            self.entry_pwd_confirm.delete(0, 'end')
             self.refresh_file_list()
 
         except Exception:
-            messagebox.showerror("Hata", "Şifre yanlış veya dosya bozuk!\nİşlem iptal edildi, eski dosya silinmedi.")
+            messagebox.showerror("Hata", "Şifre yanlış veya dosya bozuk!")
 
 if __name__ == "__main__":
     app = LocalFolderEncryptorApp()
