@@ -154,7 +154,7 @@ class CustomConfirmBox(ctk.CTkToplevel):
 
 # --- ÖZEL GİRİŞ KUTUSU ---
 class CustomInputDialog(ctk.CTkToplevel):
-    def __init__(self, master, title="Giriş", text="", initial_value="", select_to_ext=False, ext_length=0):
+    def __init__(self, master, title="Giriş", text="", initial_value="", select_to_ext=False, ext_length=0, show=None):
         super().__init__(master)
         self.withdraw()
         self.title(title)
@@ -167,7 +167,7 @@ class CustomInputDialog(ctk.CTkToplevel):
         self.lbl = ctk.CTkLabel(self, text=text, font=("Arial", 14))
         self.lbl.pack(pady=(25, 10), padx=30, anchor="w")
         
-        self.entry = ctk.CTkEntry(self, width=350, height=35, font=("Arial", 14))
+        self.entry = ctk.CTkEntry(self, width=350, height=35, font=("Arial", 14), show=show if show else "")
         self.entry.pack(pady=10, padx=30)
         
         if initial_value:
@@ -230,7 +230,7 @@ class SecureVaultApp(ctk.CTk):
         self.withdraw()
         
         pencere_g = 600
-        pencere_h = 780
+        pencere_h = 820
         
         self.geometry(f"{pencere_g}x{pencere_h}")
         self.resizable(False, False)
@@ -271,6 +271,14 @@ class SecureVaultApp(ctk.CTk):
 
         self.show_login_frame()
 
+    def on_closing(self):
+        if self.active_temp_file and os.path.exists(self.active_temp_file):
+            try:
+                os.remove(self.active_temp_file)
+            except:
+                pass
+        self.destroy()
+
     # ================= LOGIN FRAME (GİRİŞ EKRANI) =================
     def setup_login_frame(self):
         self.frame_login = ctk.CTkFrame(self, fg_color="transparent")
@@ -295,10 +303,25 @@ class SecureVaultApp(ctk.CTk):
         self.btn_login = ctk.CTkButton(self.frame_login, text="Giriş Yap", width=300, height=45, font=("Arial", 15, "bold"), command=self.login_or_create_vault)
         self.btn_login.pack(pady=15)
         
+        # Şifre Kaldırma Butonu (Başlangıçta gizli veya pasif, kasalı klasör seçilince aktif olacak)
+        self.btn_remove_vault_lock = ctk.CTkButton(
+            self.frame_login, text="🔓 Kasanın Şifresini Tamamen Kaldır", 
+            width=300, height=35, fg_color="#C0392B", hover_color="#962D22", 
+            command=self.remove_entire_vault_password
+        )
+        
         self.btn_refresh = ctk.CTkButton(self.frame_login, text="🔄 Klasörleri Yenile", fg_color="transparent", border_width=1, command=self.refresh_folders)
         self.btn_refresh.pack(pady=5)
 
     def show_login_frame(self):
+        if self.active_temp_file and os.path.exists(self.active_temp_file):
+            try:
+                os.remove(self.active_temp_file)
+            except:
+                pass
+        self.active_temp_file = None
+        self.active_vault_file = None
+
         self.frame_vault.pack_forget()
         self.frame_login.pack(fill="both", expand=True)
         self.refresh_folders()
@@ -322,6 +345,7 @@ class SecureVaultApp(ctk.CTk):
                 self.option_folders.configure(values=["Klasör bulunamadı"])
                 self.option_folders.set("Klasör bulunamadı")
                 self.lbl_status.configure(text="Klasör yok", text_color="gray")
+                self.btn_remove_vault_lock.pack_forget()
         except Exception as e:
             CustomMessageBox(self, "Hata", f"Hata:\n{e}", "error")
 
@@ -337,11 +361,77 @@ class SecureVaultApp(ctk.CTk):
             self.btn_login.configure(text="🔓 Kasaya Giriş Yap", fg_color="#3498DB", hover_color="#2980B9")
             self.entry_pwd.configure(placeholder_text="Kasa Şifresini Girin")
             self.entry_pwd_confirm.pack_forget()
+            self.btn_remove_vault_lock.pack(after=self.btn_login, pady=5)
         else:
             self.lbl_status.configure(text="Durum: 🟢 Korumasız Klasör (Yeni Kasa Oluştur)", text_color="#2FA572")
             self.btn_login.configure(text="🔒 Kasa Oluştur ve Şifrele", fg_color="#2FA572", hover_color="#1E6B49")
             self.entry_pwd.configure(placeholder_text="Yeni Kasa Şifresi Belirleyin")
             self.entry_pwd_confirm.pack(after=self.entry_pwd, pady=10)
+            self.btn_remove_vault_lock.pack_forget()
+
+    def remove_entire_vault_password(self):
+        folder_name = self.option_folders.get()
+        pwd = self.entry_pwd.get()
+        
+        if folder_name == "Klasör bulunamadı": return
+        if not pwd:
+            CustomMessageBox(self, "Uyarı", "Şifreyi kaldırmak için mevcut kasa şifresini girmelisiniz!", "warning")
+            return
+            
+        folder_path = os.path.join(self.current_dir, folder_name)
+        vault_check_path = os.path.join(folder_path, ".vault_check")
+        
+        if not os.path.exists(vault_check_path):
+            CustomMessageBox(self, "Bilgi", "Bu klasör zaten korumalı değil.", "info")
+            return
+
+        # Şifre doğrulama
+        try:
+            with open(vault_check_path, "rb") as f:
+                enc_magic = f.read()
+            decrypted_magic = decrypt_bytes(enc_magic, pwd)
+            if decrypted_magic != MAGIC_STRING:
+                raise ValueError()
+        except Exception:
+            CustomMessageBox(self, "Hata", "Yanlış Şifre! Şifre kaldırılamadı.", "error")
+            return
+
+        confirm = CustomConfirmBox(
+            self, 
+            "Kasa Şifresini Kaldır", 
+            "Dikkat! Bu klasörün şifrelemesi tamamen kaldırılacak, .vault_check silinecek ve kasadaki tüm .enc dosyaları çözülerek orijinal hallerine döndürülecektir. Onaylıyor musunuz?", 
+            "warning"
+        )
+        if not confirm.result:
+            return
+
+        try:
+            # 1. Tüm .enc dosyalarını çöz ve normal hale getir
+            for root, dirs, files in os.walk(folder_path):
+                for file in files:
+                    if file.endswith(".enc"):
+                        enc_file_path = os.path.join(root, file)
+                        orig_file_path = os.path.join(root, file[:-4])
+                        
+                        with open(enc_file_path, "rb") as f:
+                            enc_data = f.read()
+                        
+                        dec_data = decrypt_bytes(enc_data, pwd)
+                        
+                        with open(orig_file_path, "wb") as f:
+                            f.write(dec_data)
+                            
+                        os.remove(enc_file_path)
+
+            # 2. .vault_check dosyasını sil
+            if os.path.exists(vault_check_path):
+                os.remove(vault_check_path)
+
+            self.entry_pwd.delete(0, 'end')
+            CustomMessageBox(self, "Başarılı", "Kasanın şifresi başarıyla kaldırıldı. Klasör normale döndürüldü.", "info")
+            self.refresh_folders()
+        except Exception as e:
+            CustomMessageBox(self, "Hata", f"Şifre kaldırılırken hata oluştu:\n{e}", "error")
 
     def login_or_create_vault(self):
         folder_name = self.option_folders.get()
@@ -405,7 +495,7 @@ class SecureVaultApp(ctk.CTk):
                                 with open(target_path, "wb") as f:
                                     f.write(enc_data)
                                 os.remove(file_path)
-                            except Exception as e:
+                            except Exception:
                                 pass
                         CustomMessageBox(self, "Bilgi", "Şifrelenmemiş dosyalar işleme alındı.", "info")
 
@@ -472,7 +562,7 @@ class SecureVaultApp(ctk.CTk):
                             with open(target_path, "wb") as f:
                                 f.write(enc_data)
                             os.remove(file_path)
-                        except Exception as e:
+                        except Exception:
                             pass
                     CustomMessageBox(self, "Başarılı", "Kasa oluşturuldu ve mevcut dosyalar işlendi!", "info")
                 else:
@@ -509,7 +599,6 @@ class SecureVaultApp(ctk.CTk):
         self.frame_vault_controls.grid_columnconfigure(0, weight=1)
         self.frame_vault_controls.grid_columnconfigure(1, weight=1)
 
-        # 1. ve 2. satırların yer değiştirdiği buton sıralaması
         self.btn_rename = ctk.CTkButton(self.frame_vault_controls, text="✏️ Yeniden Adlandır", fg_color="#E67E22", hover_color="#D35400", command=self.rename_item_in_vault)
         self.btn_rename.grid(row=0, column=0, padx=5, pady=4, sticky="we")
 
@@ -538,6 +627,29 @@ class SecureVaultApp(ctk.CTk):
 
         self.btn_close_without_saving = ctk.CTkButton(self.frame_active, text="❌ Değişiklikleri Kaydetmeden Kapat", fg_color="#E74C3C", hover_color="#962D22", width=250, command=self.close_without_saving_active_file)
         self.btn_close_without_saving.pack(pady=(0, 10))
+
+    def logout(self):
+        if self.active_temp_file:
+            confirm = CustomConfirmBox(
+                self, "Aktif Dosya Var", 
+                "Düzenlemekte olduğunuz açık bir dosya var. Çıkış yaparsanız kaydedilmemiş değişiklikler kaybolabilir. Yine de çıkılsın mı?", 
+                "warning"
+            )
+            if not confirm.result:
+                return
+            if os.path.exists(self.active_temp_file):
+                try:
+                    os.remove(self.active_temp_file)
+                except:
+                    pass
+            self.active_temp_file = None
+            self.active_vault_file = None
+
+        self.frame_active.pack_forget()
+        self.vault_password = None
+        self.current_vault_path = None
+        self.current_relative_path = ""
+        self.show_login_frame()
 
     def refresh_vault_files(self):
         for widget in self.scroll_files.winfo_children():
@@ -606,7 +718,7 @@ class SecureVaultApp(ctk.CTk):
                     command=lambda p=rel_file_path: self.quick_open_file(p)
                 )
                 btn_file.pack(side="left", fill="x", expand=True)
-        except Exception as e:
+        except Exception:
             pass
 
     def quick_open_file(self, file_path):
@@ -695,7 +807,7 @@ class SecureVaultApp(ctk.CTk):
 
         enc_file_path = os.path.join(self.current_vault_path, selected_file_rel)
         if os.path.isdir(enc_file_path):
-            CustomMessageBox(self, "Uyarı", "Klasörler açılamaz. Lütfen bir dosya seçin.", "warning")
+            CustomMessageBox(self, "Uyarı", "Klasörler doğrudan bu şekilde açılamaz. Şifresini kaldırmak için dışa aktarabilirsiniz.", "warning")
             return
 
         original_name = os.path.basename(selected_file_rel)[:-4]
@@ -719,7 +831,7 @@ class SecureVaultApp(ctk.CTk):
             else:
                 subprocess.call(["xdg-open", self.active_temp_file])
 
-            self.lbl_active_filename.configure(text=f"Açık Dosya: {selected_file_rel[:-4]}")
+            self.lbl_active_filename.configure(text=f"Açık Dosya: {original_name}")
             self.frame_active.pack(fill="x", padx=20, pady=5)
             
         except Exception as e:
@@ -745,146 +857,150 @@ class SecureVaultApp(ctk.CTk):
             self.active_temp_file = None
             self.active_vault_file = None
             self.frame_active.pack_forget()
-            CustomMessageBox(self, "Başarılı", "Değişiklikler kaydedildi ve geçici dosya temizlendi.", "info")
-            self.refresh_vault_files()
+            CustomMessageBox(self, "Başarılı", "Değişiklikler kaydedildi ve dosya kapatıldı.", "info")
         except Exception as e:
-            CustomMessageBox(self, "Hata", f"Kaydedilirken hata oluştu:\n{e}", "error")
+            CustomMessageBox(self, "Hata", f"Dosya kaydedilemedi:\n{e}", "error")
 
     def close_without_saving_active_file(self):
         if self.active_temp_file and os.path.exists(self.active_temp_file):
             try:
                 os.remove(self.active_temp_file)
-            except Exception:
+            except:
                 pass
         self.active_temp_file = None
         self.active_vault_file = None
         self.frame_active.pack_forget()
-        CustomMessageBox(self, "Bilgi", "Değişiklikler kaydedilmeden kapatıldı.", "info")
 
     def export_file_from_vault(self):
-        selected_file_rel = self.radio_var.get()
-        if not selected_file_rel:
-            CustomMessageBox(self, "Uyarı", "Lütfen dışa aktarmak için bir dosya seçin.", "warning")
+        selected_rel = self.radio_var.get()
+        if not selected_rel:
+            CustomMessageBox(self, "Uyarı", "Lütfen dışa aktarmak (şifresini çözmek) için bir dosya veya klasör seçin.", "warning")
             return
 
-        enc_file_path = os.path.join(self.current_vault_path, selected_file_rel)
-        if os.path.isdir(enc_file_path):
-            CustomMessageBox(self, "Uyarı", "Klasörler dışa aktarılamaz.", "warning")
-            return
-
-        original_name = os.path.basename(selected_file_rel)[:-4]
-        save_path = filedialog.asksaveasfilename(title="Dosyayı Kaydet", initialfile=original_name)
-        if not save_path:
-            return
-
-        try:
-            with open(enc_file_path, "rb") as f:
-                enc_data = f.read()
-            dec_data = decrypt_bytes(enc_data, self.vault_password)
-            with open(save_path, "wb") as f:
-                f.write(dec_data)
-            CustomMessageBox(self, "Başarılı", "Dosya başarıyla şifresiz olarak dışa aktarıldı.", "info")
-        except Exception as e:
-            CustomMessageBox(self, "Hata", f"Dışa aktarma hatası:\n{e}", "error")
+        target_full_path = os.path.join(self.current_vault_path, selected_rel)
+        
+        # Klasör mü Dosya mı kontrolü
+        if os.path.isdir(target_full_path):
+            dest_dir = filedialog.askdirectory(title="Klasörün Şifresini Çözüp Çıkarılacak Yeri Seçin")
+            if not dest_dir: return
+            
+            try:
+                base_folder_name = os.path.basename(selected_rel)
+                output_folder = os.path.join(dest_dir, base_folder_name)
+                os.makedirs(output_folder, exist_ok=True)
+                
+                for root, dirs, files in os.walk(target_full_path):
+                    rel_path = os.path.relpath(root, target_full_path)
+                    current_out_dir = output_folder if rel_path == "." else os.path.join(output_folder, rel_path)
+                    os.makedirs(current_out_dir, exist_ok=True)
+                    
+                    for file in files:
+                        if file.endswith(".enc"):
+                            enc_file_path = os.path.join(root, file)
+                            out_file_path = os.path.join(current_out_dir, file[:-4])
+                            
+                            with open(enc_file_path, "rb") as f:
+                                enc_data = f.read()
+                            dec_data = decrypt_bytes(enc_data, self.vault_password)
+                            
+                            with open(out_file_path, "wb") as f:
+                                f.write(dec_data)
+                                
+                CustomMessageBox(self, "Başarılı", "Seçilen klasörün şifresi çözülerek dışarı aktarıldı.", "info")
+            except Exception as e:
+                CustomMessageBox(self, "Hata", f"Klasör dışa aktarılamadı:\n{e}", "error")
+        else:
+            if not selected_rel.endswith(".enc"):
+                CustomMessageBox(self, "Hata", "Geçersiz dosya formatı.", "error")
+                return
+                
+            original_name = os.path.basename(selected_rel)[:-4]
+            dest_path = filedialog.asksaveasfilename(title="Dosyayı Kaydet", initialfile=original_name)
+            if not dest_path: return
+            
+            try:
+                with open(target_full_path, "rb") as f:
+                    enc_data = f.read()
+                dec_data = decrypt_bytes(enc_data, self.vault_password)
+                
+                with open(dest_path, "wb") as f:
+                    f.write(dec_data)
+                    
+                CustomMessageBox(self, "Başarılı", "Dosya şifresiz olarak dışa aktarıldı.", "info")
+            except Exception as e:
+                CustomMessageBox(self, "Hata", f"Dosya dışa aktarılamadı:\n{e}", "error")
 
     def delete_file_from_vault(self):
-        selected_file_rel = self.radio_var.get()
-        if not selected_file_rel:
-            CustomMessageBox(self, "Uyarı", "Lütfen silmek için bir öge seçin.", "warning")
+        selected_rel = self.radio_var.get()
+        if not selected_rel:
+            CustomMessageBox(self, "Uyarı", "Lütfen silmek için bir öğe seçin.", "warning")
             return
 
-        target_path = os.path.join(self.current_vault_path, selected_file_rel)
-        is_dir = os.path.isdir(target_path)
-        item_type = "klasörü" if is_dir else "dosyasını"
-
-        confirm = CustomConfirmBox(
-            self,
-            "Silme Onayı",
-            f"'{os.path.basename(selected_file_rel)}' {item_type} silmek istediğinize emin misiniz?",
-            "error"
-        )
-        if confirm.result:
-            try:
-                if is_dir:
-                    shutil.rmtree(target_path)
-                else:
-                    os.remove(target_path)
-                CustomMessageBox(self, "Başarılı", "Öge silindi.", "info")
-                self.refresh_vault_files()
-            except Exception as e:
-                CustomMessageBox(self, "Hata", f"Silme hatası:\n{e}", "error")
-
-    def rename_item_in_vault(self):
-        selected_file_rel = self.radio_var.get()
-        if not selected_file_rel:
-            CustomMessageBox(self, "Uyarı", "Lütfen yeniden adlandırmak için bir öge seçin.", "warning")
-            return
-
-        target_path = os.path.join(self.current_vault_path, selected_file_rel)
-        is_dir = os.path.isdir(target_path)
-        old_name = os.path.basename(selected_file_rel)
+        target_full_path = os.path.join(self.current_vault_path, selected_rel)
+        is_dir = os.path.isdir(target_full_path)
         
-        if not is_dir and old_name.endswith('.enc'):
-            old_display_name = old_name[:-4]
-            ext = os.path.splitext(old_display_name)[1]
-            ext_len = len(ext)
-        else:
-            old_display_name = old_name
-            ext_len = 0
-
-        dialog = CustomInputDialog(
-            self,
-            title="Yeniden Adlandır",
-            text="Yeni ismi girin:",
-            initial_value=old_display_name,
-            select_to_ext=True,
-            ext_length=ext_len
+        item_type_str = "klasörü ve içindekileri" if is_dir else "dosyayı"
+        confirm = CustomConfirmBox(
+            self, "Silme Onayı", 
+            f"'{os.path.basename(selected_rel)}' adlı {item_type_str} kasadan kalıcı olarak silmek istediğinize emin misiniz?", 
+            "warning"
         )
-        new_name = dialog.result
-        if not new_name or new_name == old_display_name:
-            return
-
-        new_name = new_name.strip()
-        if not is_dir:
-            new_file_name = new_name + ".enc"
-        else:
-            new_file_name = new_name
-
-        parent_dir = os.path.dirname(target_path)
-        new_path = os.path.join(parent_dir, new_file_name)
-
-        if os.path.exists(new_path):
-            CustomMessageBox(self, "Hata", "Bu isimde bir dosya/klasör zaten var!", "error")
+        if not confirm.result:
             return
 
         try:
-            os.rename(target_path, new_path)
-            CustomMessageBox(self, "Başarılı", "Yeniden adlandırıldı.", "info")
+            if is_dir:
+                shutil.rmtree(target_full_path)
+            else:
+                if self.active_vault_file == target_full_path:
+                    self.close_without_saving_active_file()
+                os.remove(target_full_path)
+                
+            CustomMessageBox(self, "Başarılı", "Öğe kasadan silindi.", "info")
             self.refresh_vault_files()
         except Exception as e:
-            CustomMessageBox(self, "Hata", f"Yeniden adlandırma hatası:\n{e}", "error")
+            CustomMessageBox(self, "Hata", f"Silme işlemi başarısız:\n{e}", "error")
 
-    def logout(self):
-        if self.active_temp_file and os.path.exists(self.active_temp_file):
-            try:
-                os.remove(self.active_temp_file)
-            except Exception:
-                pass
-        self.active_temp_file = None
-        self.active_vault_file = None
-        self.vault_password = None
-        self.current_vault_path = None
-        self.current_relative_path = ""
-        self.frame_active.pack_forget()
-        self.show_login_frame()
+    def rename_item_in_vault(self):
+        selected_rel = self.radio_var.get()
+        if not selected_rel:
+            CustomMessageBox(self, "Uyarı", "Lütfen yeniden adlandırmak için bir öğe seçin.", "warning")
+            return
 
-    def on_closing(self):
-        if self.active_temp_file and os.path.exists(self.active_temp_file):
-            try:
-                os.remove(self.active_temp_file)
-            except Exception:
-                pass
-        self.destroy()
+        target_full_path = os.path.join(self.current_vault_path, selected_rel)
+        is_dir = os.path.isdir(target_full_path)
+        
+        current_name = os.path.basename(selected_rel)
+        if not is_dir and current_name.endswith(".enc"):
+            current_name = current_name[:-4]
+
+        dialog = CustomInputDialog(self, title="Yeniden Adlandır", text="Yeni adı girin:", initial_value=current_name)
+        new_name = dialog.result
+        if not new_name: return
+        
+        new_name = new_name.strip()
+        if not new_name or new_name == current_name: return
+
+        parent_dir = os.path.dirname(target_full_path)
+        
+        if is_dir:
+            new_full_path = os.path.join(parent_dir, new_name)
+        else:
+            new_full_path = os.path.join(parent_dir, new_name + ".enc")
+
+        if os.path.exists(new_full_path):
+            CustomMessageBox(self, "Hata", "Bu isimde başka bir öğe zaten mevcut!", "error")
+            return
+
+        try:
+            if not is_dir and self.active_vault_file == target_full_path:
+                self.close_without_saving_active_file()
+
+            os.rename(target_full_path, new_full_path)
+            CustomMessageBox(self, "Başarılı", "Öğe yeniden adlandırıldı.", "info")
+            self.refresh_vault_files()
+        except Exception as e:
+            CustomMessageBox(self, "Hata", f"Yeniden adlandırılamadı:\n{e}", "error")
 
 
 if __name__ == "__main__":
