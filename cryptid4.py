@@ -117,7 +117,7 @@ class CustomConfirmBox(ctk.CTkToplevel):
         btn_frame.grid_columnconfigure(1, weight=1)
         
         self.btn_yes = ctk.CTkButton(
-            btn_frame, text="Evet, Sil", command=self.on_yes, width=120,
+            btn_frame, text="Evet", command=self.on_yes, width=120,
             fg_color="#E74C3C", hover_color="#962D22"
         )
         self.btn_yes.grid(row=0, column=0, padx=5)
@@ -161,7 +161,7 @@ class SecureVaultApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Korumalı Kasa (Vault) Yöneticisi")
-        self.geometry("600x680")
+        self.geometry("600x720")
         self.resizable(False, False)
 
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -202,7 +202,7 @@ class SecureVaultApp(ctk.CTk):
         self.entry_pwd = ctk.CTkEntry(self.frame_login, placeholder_text="Şifre", show="*", width=300, height=40, font=("Arial", 14))
         self.entry_pwd.pack(pady=10)
 
-        # 2. Şifre Doğrulama Kutusu (Sadece yeni kasa oluştururken gösterilecek)
+        # 2. Şifre Doğrulama Kutusu
         self.entry_pwd_confirm = ctk.CTkEntry(self.frame_login, placeholder_text="Şifreyi Tekrar Girin", show="*", width=300, height=40, font=("Arial", 14))
 
         self.btn_login = ctk.CTkButton(self.frame_login, text="Giriş Yap", width=300, height=45, font=("Arial", 15, "bold"), command=self.login_or_create_vault)
@@ -238,13 +238,11 @@ class SecureVaultApp(ctk.CTk):
             self.lbl_status.configure(text="Durum: 🔴 Korumalı Kasa (Giriş Yapın)", text_color="#E74C3C")
             self.btn_login.configure(text="🔓 Kasaya Giriş Yap", fg_color="#3498DB", hover_color="#2980B9")
             self.entry_pwd.configure(placeholder_text="Kasa Şifresini Girin")
-            # Korumalı kasada ikinci şifre kutusunu gizle
             self.entry_pwd_confirm.pack_forget()
         else:
             self.lbl_status.configure(text="Durum: 🟢 Korumasız Klasör (Yeni Kasa Oluştur)", text_color="#2FA572")
             self.btn_login.configure(text="🔒 Kasa Oluştur ve Şifrele", fg_color="#2FA572", hover_color="#1E6B49")
             self.entry_pwd.configure(placeholder_text="Yeni Kasa Şifresi Belirleyin")
-            # Korumasız klasörde ikinci şifre kutusunu göster (şifrenin hemen altına yerleştir)
             self.entry_pwd_confirm.pack(after=self.entry_pwd, pady=10)
 
     def login_or_create_vault(self):
@@ -260,7 +258,6 @@ class SecureVaultApp(ctk.CTk):
         vault_check_path = os.path.join(folder_path, ".vault_check")
 
         if os.path.exists(vault_check_path):
-            # Mevcut kasaya giriş yapma
             try:
                 with open(vault_check_path, "rb") as f:
                     enc_magic = f.read()
@@ -277,7 +274,6 @@ class SecureVaultApp(ctk.CTk):
             except Exception:
                 CustomMessageBox(self, "Hata", "Yanlış Şifre!", "error")
         else:
-            # Yeni kasa oluşturma (İki şifrenin eşleştiğini kontrol et)
             pwd_confirm = self.entry_pwd_confirm.get()
             if pwd != pwd_confirm:
                 CustomMessageBox(self, "Hata", "Girdiğiniz şifreler birbiriyle eşleşmiyor!", "error")
@@ -319,11 +315,11 @@ class SecureVaultApp(ctk.CTk):
         self.btn_logout = ctk.CTkButton(self.frame_vault_top, text="Çıkış Yap / Kilitle", width=120, fg_color="#E74C3C", hover_color="#962D22", command=self.logout)
         self.btn_logout.pack(side="right")
 
-        self.scroll_files = ctk.CTkScrollableFrame(self.frame_vault, height=260, label_text="Kasadaki Dosyalar")
+        self.scroll_files = ctk.CTkScrollableFrame(self.frame_vault, height=220, label_text="Kasadaki Dosyalar")
         self.scroll_files.pack(fill="x", padx=20, pady=5)
 
         self.frame_vault_controls = ctk.CTkFrame(self.frame_vault, fg_color="transparent")
-        self.frame_vault_controls.pack(fill="x", padx=20, pady=10)
+        self.frame_vault_controls.pack(fill="x", padx=20, pady=5)
         
         self.frame_vault_controls.grid_columnconfigure(0, weight=1)
         self.frame_vault_controls.grid_columnconfigure(1, weight=1)
@@ -340,16 +336,20 @@ class SecureVaultApp(ctk.CTk):
         self.btn_del_file = ctk.CTkButton(self.frame_vault_controls, text="🗑️ Seçileni Sil", fg_color="transparent", border_width=1, text_color="#E74C3C", border_color="#E74C3C", hover_color="#3A1C1C", command=self.delete_file_from_vault)
         self.btn_del_file.grid(row=1, column=1, padx=5, pady=5, sticky="we")
 
+        # Aktif Dosya Paneli
         self.frame_active = ctk.CTkFrame(self.frame_vault, fg_color="#2B2B2B", border_width=1, border_color="#F39C12")
         
         self.lbl_active_info = ctk.CTkLabel(self.frame_active, text="⚠️ Şu an bir dosya açık. Düzenleme yapabilirsiniz.", text_color="#F39C12", font=("Arial", 12, "bold"))
-        self.lbl_active_info.pack(pady=(10, 5))
+        self.lbl_active_info.pack(pady=(8, 2))
         
         self.lbl_active_filename = ctk.CTkLabel(self.frame_active, text="Dosya: none.txt")
-        self.lbl_active_filename.pack(pady=5)
+        self.lbl_active_filename.pack(pady=2)
         
         self.btn_save_close = ctk.CTkButton(self.frame_active, text="💾 Değişiklikleri Kaydet ve Kapat", fg_color="#2FA572", hover_color="#1E6B49", width=250, command=self.save_and_close_active_file)
-        self.btn_save_close.pack(pady=(5, 15))
+        self.btn_save_close.pack(pady=(5, 5))
+
+        self.btn_close_without_saving = ctk.CTkButton(self.frame_active, text="❌ Değişiklikleri Kaydetmeden Kapat", fg_color="#E74C3C", hover_color="#962D22", width=250, command=self.close_without_saving_active_file)
+        self.btn_close_without_saving.pack(pady=(0, 10))
 
 
     def refresh_vault_files(self):
@@ -395,7 +395,7 @@ class SecureVaultApp(ctk.CTk):
 
     def open_file_from_vault(self):
         if self.active_temp_file:
-            CustomMessageBox(self, "Uyarı", "Önce açık olan dosyayı 'Kaydet ve Kapat' ile kapatmalısınız!", "warning")
+            CustomMessageBox(self, "Uyarı", "Önce açık olan dosyayı kapatmalısınız!", "warning")
             return
             
         selected_file = self.radio_var.get()
@@ -427,7 +427,7 @@ class SecureVaultApp(ctk.CTk):
 
             self.btn_open_file.configure(state="disabled")
             self.lbl_active_filename.configure(text=f"Açık Dosya: {original_name}")
-            self.frame_active.pack(fill="x", padx=20, pady=10)
+            self.frame_active.pack(fill="x", padx=20, pady=5)
             
         except Exception as e:
             self.active_temp_file = None
@@ -482,6 +482,27 @@ class SecureVaultApp(ctk.CTk):
         self.reset_active_state()
         self.refresh_vault_files()
 
+    def close_without_saving_active_file(self):
+        if not self.active_temp_file:
+            self.reset_active_state()
+            return
+            
+        original_name = os.path.basename(self.active_vault_file)[:-4] if self.active_vault_file else "Dosya"
+        
+        # Silme işlemindeki gibi onay penceresi
+        confirm = CustomConfirmBox(
+            self, 
+            "Değişiklikleri Atma Onay", 
+            f"'{original_name}' dosyasında yaptığınız değişiklikleri kaydetmeden kapatmak istediğinize emin misiniz? Yapılan değişiklikler kaybolacak.", 
+            "warning"
+        )
+        if not confirm.result:
+            return
+            
+        self.reset_active_state()
+        CustomMessageBox(self, "Bilgi", "Dosya kapatıldı, değişiklikler kaydedilmedi.", "info")
+        self.refresh_vault_files()
+
     def reset_active_state(self):
         if self.active_temp_file and os.path.exists(self.active_temp_file):
             try:
@@ -525,7 +546,7 @@ class SecureVaultApp(ctk.CTk):
 
     def logout(self):
         if self.active_temp_file:
-            CustomMessageBox(self, "Uyarı", "Çıkış yapmadan önce açık olan dosyanızı 'Kaydet ve Kapat' butonu ile kapatmalısınız!", "warning")
+            CustomMessageBox(self, "Uyarı", "Çıkış yapmadan önce açık olan dosyanızı kapatmalısınız!", "warning")
             return
             
         self.vault_password = None
