@@ -161,7 +161,7 @@ class SecureVaultApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Korumalı Kasa (Vault) Yöneticisi")
-        self.geometry("600x650")
+        self.geometry("600x680")
         self.resizable(False, False)
 
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -188,10 +188,10 @@ class SecureVaultApp(ctk.CTk):
         self.frame_login = ctk.CTkFrame(self, fg_color="transparent")
         
         self.lbl_title = ctk.CTkLabel(self.frame_login, text="🔒 Kasa Girişi", font=("Arial", 22, "bold"))
-        self.lbl_title.pack(pady=(40, 10))
+        self.lbl_title.pack(pady=(30, 10))
         
         self.lbl_desc = ctk.CTkLabel(self.frame_login, text="Bulunduğunuz dizindeki bir klasörü seçin.\nEğer klasör korumalı değilse yeni şifreyle korumaya alınacaktır.", text_color="gray")
-        self.lbl_desc.pack(pady=(0, 30))
+        self.lbl_desc.pack(pady=(0, 20))
 
         self.option_folders = ctk.CTkOptionMenu(self.frame_login, width=300, command=self.on_folder_changed)
         self.option_folders.pack(pady=10)
@@ -200,13 +200,16 @@ class SecureVaultApp(ctk.CTk):
         self.lbl_status.pack(pady=5)
 
         self.entry_pwd = ctk.CTkEntry(self.frame_login, placeholder_text="Şifre", show="*", width=300, height=40, font=("Arial", 14))
-        self.entry_pwd.pack(pady=20)
+        self.entry_pwd.pack(pady=10)
+
+        # 2. Şifre Doğrulama Kutusu (Sadece yeni kasa oluştururken gösterilecek)
+        self.entry_pwd_confirm = ctk.CTkEntry(self.frame_login, placeholder_text="Şifreyi Tekrar Girin", show="*", width=300, height=40, font=("Arial", 14))
 
         self.btn_login = ctk.CTkButton(self.frame_login, text="Giriş Yap", width=300, height=45, font=("Arial", 15, "bold"), command=self.login_or_create_vault)
-        self.btn_login.pack(pady=10)
+        self.btn_login.pack(pady=15)
         
         self.btn_refresh = ctk.CTkButton(self.frame_login, text="🔄 Klasörleri Yenile", fg_color="transparent", border_width=1, command=self.refresh_folders)
-        self.btn_refresh.pack(pady=10)
+        self.btn_refresh.pack(pady=5)
 
     def refresh_folders(self):
         try:
@@ -235,10 +238,14 @@ class SecureVaultApp(ctk.CTk):
             self.lbl_status.configure(text="Durum: 🔴 Korumalı Kasa (Giriş Yapın)", text_color="#E74C3C")
             self.btn_login.configure(text="🔓 Kasaya Giriş Yap", fg_color="#3498DB", hover_color="#2980B9")
             self.entry_pwd.configure(placeholder_text="Kasa Şifresini Girin")
+            # Korumalı kasada ikinci şifre kutusunu gizle
+            self.entry_pwd_confirm.pack_forget()
         else:
             self.lbl_status.configure(text="Durum: 🟢 Korumasız Klasör (Yeni Kasa Oluştur)", text_color="#2FA572")
             self.btn_login.configure(text="🔒 Kasa Oluştur ve Şifrele", fg_color="#2FA572", hover_color="#1E6B49")
             self.entry_pwd.configure(placeholder_text="Yeni Kasa Şifresi Belirleyin")
+            # Korumasız klasörde ikinci şifre kutusunu göster (şifrenin hemen altına yerleştir)
+            self.entry_pwd_confirm.pack(after=self.entry_pwd, pady=10)
 
     def login_or_create_vault(self):
         folder_name = self.option_folders.get()
@@ -253,6 +260,7 @@ class SecureVaultApp(ctk.CTk):
         vault_check_path = os.path.join(folder_path, ".vault_check")
 
         if os.path.exists(vault_check_path):
+            # Mevcut kasaya giriş yapma
             try:
                 with open(vault_check_path, "rb") as f:
                     enc_magic = f.read()
@@ -263,11 +271,18 @@ class SecureVaultApp(ctk.CTk):
                 self.vault_password = pwd
                 self.current_vault_path = folder_path
                 self.entry_pwd.delete(0, 'end')
+                self.entry_pwd_confirm.delete(0, 'end')
                 self.show_vault_frame()
                 
             except Exception:
                 CustomMessageBox(self, "Hata", "Yanlış Şifre!", "error")
         else:
+            # Yeni kasa oluşturma (İki şifrenin eşleştiğini kontrol et)
+            pwd_confirm = self.entry_pwd_confirm.get()
+            if pwd != pwd_confirm:
+                CustomMessageBox(self, "Hata", "Girdiğiniz şifreler birbiriyle eşleşmiyor!", "error")
+                return
+
             try:
                 enc_magic = encrypt_bytes(MAGIC_STRING, pwd)
                 with open(vault_check_path, "wb") as f:
@@ -285,6 +300,7 @@ class SecureVaultApp(ctk.CTk):
                 self.vault_password = pwd
                 self.current_vault_path = folder_path
                 self.entry_pwd.delete(0, 'end')
+                self.entry_pwd_confirm.delete(0, 'end')
                 CustomMessageBox(self, "Başarılı", "Kasa oluşturuldu ve dosyalar şifrelendi!", "info")
                 self.show_vault_frame()
             except Exception as e:
@@ -490,7 +506,6 @@ class SecureVaultApp(ctk.CTk):
             
         original_name = selected_file[:-4]
         
-        # Tek aşamalı onay penceresi
         confirm = CustomConfirmBox(
             self, 
             "Silme Onayı", 
