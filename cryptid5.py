@@ -4,7 +4,6 @@ import sys
 import subprocess
 import tempfile
 import shutil
-import threading
 from tkinter import filedialog
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -231,7 +230,7 @@ class SecureVaultApp(ctk.CTk):
         self.withdraw()
         
         pencere_g = 600
-        pencere_h = 840
+        pencere_h = 780
         
         self.geometry(f"{pencere_g}x{pencere_h}")
         self.resizable(False, False)
@@ -356,89 +355,137 @@ class SecureVaultApp(ctk.CTk):
         folder_path = os.path.join(self.current_dir, folder_name)
         vault_check_path = os.path.join(folder_path, ".vault_check")
 
-        self.show_progress("Giriş yapılıyor...", 0)
-        self.btn_login.configure(state="disabled")
-
-        def background_login():
+        if os.path.exists(vault_check_path):
             try:
-                self.update_progress(30, "Doğrulanıyor...")
-                if os.path.exists(vault_check_path):
-                    with open(vault_check_path, "rb") as f:
-                        enc_magic = f.read()
-                    decrypted_magic = decrypt_bytes(enc_magic, pwd)
-                    if decrypted_magic != MAGIC_STRING:
-                        raise ValueError()
-                    
-                    self.vault_password = pwd
-                    self.current_vault_path = folder_path
-                    self.current_relative_path = ""
-                    
-                    def success_ui():
-                        self.update_progress(100, "Tamamlandı!")
-                        self.hide_progress()
-                        self.btn_login.configure(state="normal")
-                        self.entry_pwd.delete(0, 'end')
-                        self.entry_pwd_confirm.delete(0, 'end')
-                        self.show_vault_frame()
-                    self.after(0, success_ui)
-                    
-                else:
-                    pwd_confirm = self.entry_pwd_confirm.get()
-                    if pwd != pwd_confirm:
-                        def err_match():
-                            self.hide_progress()
-                            self.btn_login.configure(state="normal")
-                            CustomMessageBox(self, "Hata", "Girdiğiniz şifreler birbiriyle eşleşmiyor!", "error")
-                        self.after(0, err_match)
-                        return
+                with open(vault_check_path, "rb") as f:
+                    enc_magic = f.read()
+                decrypted_magic = decrypt_bytes(enc_magic, pwd)
+                if decrypted_magic != MAGIC_STRING:
+                    raise ValueError()
+                
+                unencrypted_files = []
+                for root, dirs, files in os.walk(folder_path):
+                    if ".git" in root or "__pycache__" in root:
+                        continue
+                    for file in files:
+                        if file == ".vault_check" or file.endswith(".enc"):
+                            continue
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path, folder_path)
+                        unencrypted_files.append((file, full_path, rel_path))
+                
+                if unencrypted_files:
+                    file_list_str = ", ".join([item[0] for item in unencrypted_files[:3]])
+                    if len(unencrypted_files) > 3:
+                        file_list_str += f" ve {len(unencrypted_files) - 3} dosya daha"
+                        
+                    confirm = CustomConfirmBox(
+                        self,
+                        "Şifrelenmemiş Dosyalar Tespit Edildi",
+                        f"Kasada şifrelenmemiş dosyalar bulundu ({file_list_str}). Bu dosyaları otomatik olarak şifrelemek ister misiniz?",
+                        "warning"
+                    )
+                    if confirm.result:
+                        for file, file_path, rel_path in unencrypted_files:
+                            target_path = file_path + ".enc"
+                            if os.path.exists(target_path):
+                                file_confirm = CustomConfirmBox(
+                                    self,
+                                    "Üzerine Yazma Onayı",
+                                    f"'{rel_path}' dosyasının şifrelenmiş hali (.enc) zaten kasada mevcut. Üzerine yazmak istiyor musunuz?",
+                                    "warning"
+                                )
+                                if not file_confirm.result:
+                                    continue
 
-                    self.update_progress(60, "Kasa oluşturuluyor...")
-                    enc_magic = encrypt_bytes(MAGIC_STRING, pwd)
-                    with open(vault_check_path, "wb") as f:
-                        f.write(enc_magic)
+                            try:
+                                with open(file_path, "rb") as f:
+                                    data = f.read()
+                                enc_data = encrypt_bytes(data, pwd)
+                                with open(target_path, "wb") as f:
+                                    f.write(enc_data)
+                                os.remove(file_path)
+                            except Exception as e:
+                                pass
+                        CustomMessageBox(self, "Bilgi", "Şifrelenmemiş dosyalar işleme alındı.", "info")
 
-                    self.vault_password = pwd
-                    self.current_vault_path = folder_path
-                    self.current_relative_path = ""
-                    
-                    def success_create():
-                        self.update_progress(100, "Tamamlandı!")
-                        self.hide_progress()
-                        self.btn_login.configure(state="normal")
-                        self.entry_pwd.delete(0, 'end')
-                        self.entry_pwd_confirm.delete(0, 'end')
-                        CustomMessageBox(self, "Başarılı", "Kasa oluşturuldu!", "info")
-                        self.show_vault_frame()
-                    self.after(0, success_create)
-
+                self.vault_password = pwd
+                self.current_vault_path = folder_path
+                self.current_relative_path = ""
+                self.entry_pwd.delete(0, 'end')
+                self.entry_pwd_confirm.delete(0, 'end')
+                self.show_vault_frame()
+                
             except Exception:
-                def err_pwd():
-                    self.hide_progress()
-                    self.btn_login.configure(state="normal")
-                    CustomMessageBox(self, "Hata", "Yanlış Şifre veya Kasa Oluşturulamadı!", "error")
-                self.after(0, err_pwd)
+                CustomMessageBox(self, "Hata", "Yanlış Şifre!", "error")
+        else:
+            pwd_confirm = self.entry_pwd_confirm.get()
+            if pwd != pwd_confirm:
+                CustomMessageBox(self, "Hata", "Girdiğiniz şifreler birbiriyle eşleşmiyor!", "error")
+                return
 
-        threading.Thread(target=background_login, daemon=True).start()
+            try:
+                enc_magic = encrypt_bytes(MAGIC_STRING, pwd)
+                with open(vault_check_path, "wb") as f:
+                    f.write(enc_magic)
+                    
+                unencrypted_files = []
+                for root, dirs, files in os.walk(folder_path):
+                    for file in files:
+                        if file == ".vault_check" or file.endswith(".enc"):
+                            continue
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path, folder_path)
+                        unencrypted_files.append((file, full_path, rel_path))
+                
+                encrypt_existing = True
+                if unencrypted_files:
+                    file_list_str = ", ".join([item[0] for item in unencrypted_files[:3]])
+                    if len(unencrypted_files) > 3:
+                        file_list_str += f" ve {len(unencrypted_files) - 3} dosya daha"
+                        
+                    confirm = CustomConfirmBox(
+                        self,
+                        "Şifrelenmemiş Dosyalar Tespit Edildi",
+                        f"Klasörde şifrelenmemiş dosyalar bulundu ({file_list_str}). Bu dosyaları otomatik olarak şifrelemek ister misiniz?",
+                        "warning"
+                    )
+                    encrypt_existing = confirm.result
 
-    # ================= YÜKLEME ÇUBUĞU YARDIMCI FONKSİYONLARI =================
-    def show_progress(self, text, val=0):
-        self.lbl_progress_text.configure(text=text)
-        self.progress_bar.set(val / 100.0)
-        self.lbl_progress_text.pack(fill="x", padx=20, pady=(5, 0))
-        self.progress_bar.pack(fill="x", padx=20, pady=(0, 5))
+                if encrypt_existing and unencrypted_files:
+                    for file, file_path, rel_path in unencrypted_files:
+                        target_path = file_path + ".enc"
+                        if os.path.exists(target_path):
+                            file_confirm = CustomConfirmBox(
+                                self,
+                                "Üzerine Yazma Onayı",
+                                f"'{rel_path}' dosyasının şifrelenmiş hali (.enc) zaten kasada mevcut. Üzerine yazmak istiyor musunuz?",
+                                "warning"
+                            )
+                            if not file_confirm.result:
+                                continue
 
-    def update_progress(self, val, text=None):
-        def _update():
-            if text:
-                self.lbl_progress_text.configure(text=text)
-            self.progress_bar.set(val / 100.0)
-        self.after(0, _update)
+                        try:
+                            with open(file_path, "rb") as f:
+                                data = f.read()
+                            enc_data = encrypt_bytes(data, pwd)
+                            with open(target_path, "wb") as f:
+                                f.write(enc_data)
+                            os.remove(file_path)
+                        except Exception as e:
+                            pass
+                    CustomMessageBox(self, "Başarılı", "Kasa oluşturuldu ve mevcut dosyalar işlendi!", "info")
+                else:
+                    CustomMessageBox(self, "Başarılı", "Kasa oluşturuldu!", "info")
 
-    def hide_progress(self):
-        def _hide():
-            self.lbl_progress_text.pack_forget()
-            self.progress_bar.pack_forget()
-        self.after(0, _hide)
+                self.vault_password = pwd
+                self.current_vault_path = folder_path
+                self.current_relative_path = ""
+                self.entry_pwd.delete(0, 'end')
+                self.entry_pwd_confirm.delete(0, 'end')
+                self.show_vault_frame()
+            except Exception as e:
+                CustomMessageBox(self, "Hata", f"Kasa oluşturulamadı:\n{e}", "error")
 
     # ================= VAULT FRAME (İÇ EKRAN) =================
     def setup_vault_frame(self):
@@ -456,17 +503,13 @@ class SecureVaultApp(ctk.CTk):
         self.scroll_files = ctk.CTkScrollableFrame(self.frame_vault, height=200, label_text="Kasadaki Dosyalar ve Klasörler")
         self.scroll_files.pack(fill="x", padx=20, pady=5)
 
-        # YÜKLEME ÇUBUĞU VE YÜZDE BİLGİSİ (Başlangıçta gizli)
-        self.lbl_progress_text = ctk.CTkLabel(self.frame_vault, text="İşlem yapılıyor...", font=("Arial", 11), text_color="gray")
-        self.progress_bar = ctk.CTkProgressBar(self.frame_vault, orientation="horizontal", mode="determinate")
-        self.progress_bar.set(0)
-
         self.frame_vault_controls = ctk.CTkFrame(self.frame_vault, fg_color="transparent")
         self.frame_vault_controls.pack(fill="x", padx=20, pady=5)
         
         self.frame_vault_controls.grid_columnconfigure(0, weight=1)
         self.frame_vault_controls.grid_columnconfigure(1, weight=1)
 
+        # 1. ve 2. satırların yer değiştirdiği buton sıralaması
         self.btn_rename = ctk.CTkButton(self.frame_vault_controls, text="✏️ Yeniden Adlandır", fg_color="#E67E22", hover_color="#D35400", command=self.rename_item_in_vault)
         self.btn_rename.grid(row=0, column=0, padx=5, pady=4, sticky="we")
 
@@ -610,47 +653,35 @@ class SecureVaultApp(ctk.CTk):
         
         current_target_dir = os.path.join(self.current_vault_path, self.current_relative_path)
         
-        self.show_progress("Dosyalar kasaya ekleniyor... (%0)", 0)
-        self.btn_add_file.configure(state="disabled")
-
-        def background_add():
-            try:
-                total_files = len(file_paths)
-                added_count = 0
-                for index, file_path in enumerate(file_paths):
-                    file_name = os.path.basename(file_path)
-                    target_path = os.path.join(current_target_dir, file_name + ".enc")
-                    
-                    self.update_progress(int((index / total_files) * 100), f"Okunuyor: {file_name}")
-                    
-                    with open(file_path, "rb") as f:
-                        data = f.read()
-                    
-                    self.update_progress(int((index + 0.5) / total_files * 100), f"Şifreleniyor: {file_name}")
-                    enc_data = encrypt_bytes(data, self.vault_password)
-                    
-                    with open(target_path, "wb") as f:
-                        f.write(enc_data)
-                    
-                    added_count += 1
-                    percent = int((added_count / total_files) * 100)
-                    self.update_progress(percent, f"Eklendi: {file_name} (%{percent})")
+        try:
+            added_count = 0
+            for file_path in file_paths:
+                file_name = os.path.basename(file_path)
+                target_path = os.path.join(current_target_dir, file_name + ".enc")
                 
-                def finish_add():
-                    self.hide_progress()
-                    self.btn_add_file.configure(state="normal")
-                    if added_count > 0:
-                        CustomMessageBox(self, "Başarılı", "Dosyalar şifrelenerek kasaya eklendi.", "info")
-                        self.refresh_vault_files()
-                self.after(0, finish_add)
-            except Exception as e:
-                def err_add():
-                    self.hide_progress()
-                    self.btn_add_file.configure(state="normal")
-                    CustomMessageBox(self, "Hata", f"Dosya eklenirken hata:\n{e}", "error")
-                self.after(0, err_add)
-
-        threading.Thread(target=background_add, daemon=True).start()
+                if os.path.exists(target_path):
+                    confirm = CustomConfirmBox(
+                        self,
+                        "Üzerine Yazma Onayı",
+                        f"'{file_name}' adında bir dosya zaten bu klasörde mevcut. Üzerine yazmak istiyor musunuz?",
+                        "warning"
+                    )
+                    if not confirm.result:
+                        continue
+                
+                with open(file_path, "rb") as f:
+                    data = f.read()
+                
+                enc_data = encrypt_bytes(data, self.vault_password)
+                with open(target_path, "wb") as f:
+                    f.write(enc_data)
+                added_count += 1
+                
+            if added_count > 0:
+                CustomMessageBox(self, "Başarılı", "Dosyalar şifrelenerek kasaya eklendi.", "info")
+                self.refresh_vault_files()
+        except Exception as e:
+            CustomMessageBox(self, "Hata", f"Dosya eklenirken hata:\n{e}", "error")
 
     def open_file_from_vault(self):
         if self.active_temp_file:
@@ -669,85 +700,55 @@ class SecureVaultApp(ctk.CTk):
 
         original_name = os.path.basename(selected_file_rel)[:-4]
         
-        self.show_progress("Dosya okunuyor... (%20)", 20)
+        try:
+            with open(enc_file_path, "rb") as f:
+                enc_data = f.read()
+            dec_data = decrypt_bytes(enc_data, self.vault_password)
+            
+            temp_dir = tempfile.gettempdir()
+            self.active_temp_file = os.path.join(temp_dir, f"VAULT_{original_name}")
+            self.active_vault_file = enc_file_path
+            
+            with open(self.active_temp_file, "wb") as f:
+                f.write(dec_data)
+                
+            if sys.platform == "win32":
+                os.startfile(self.active_temp_file)
+            elif sys.platform == "darwin":
+                subprocess.call(["open", self.active_temp_file])
+            else:
+                subprocess.call(["xdg-open", self.active_temp_file])
 
-        def background_open():
-            try:
-                self.update_progress(40, "Şifre çözülüyor (Büyük dosyalarda sürebilir)... (%40)")
-                with open(enc_file_path, "rb") as f:
-                    enc_data = f.read()
-                
-                dec_data = decrypt_bytes(enc_data, self.vault_password)
-                
-                self.update_progress(80, "Geçici dosya hazırlanıyor... (%80)")
-                temp_dir = tempfile.gettempdir()
-                self.active_temp_file = os.path.join(temp_dir, f"VAULT_{original_name}")
-                self.active_vault_file = enc_file_path
-                
-                with open(self.active_temp_file, "wb") as f:
-                    f.write(dec_data)
-                
-                def finish_open():
-                    self.update_progress(100, "Tamamlandı! (%100)")
-                    self.hide_progress()
-                    
-                    if sys.platform == "win32":
-                        os.startfile(self.active_temp_file)
-                    elif sys.platform == "darwin":
-                        subprocess.call(["open", self.active_temp_file])
-                    else:
-                        subprocess.call(["xdg-open", self.active_temp_file])
-
-                    self.lbl_active_filename.configure(text=f"Açık Dosya: {original_name}")
-                    self.frame_active.pack(fill="x", padx=20, pady=5)
-
-                self.after(0, finish_open)
-                
-            except Exception as e:
-                def err_open():
-                    self.hide_progress()
-                    self.active_temp_file = None
-                    self.active_vault_file = None
-                    CustomMessageBox(self, "Hata", f"Dosya açılamadı:\n{e}", "error")
-                self.after(0, err_open)
-
-        threading.Thread(target=background_open, daemon=True).start()
+            self.lbl_active_filename.configure(text=f"Açık Dosya: {selected_file_rel[:-4]}")
+            self.frame_active.pack(fill="x", padx=20, pady=5)
+            
+        except Exception as e:
+            self.active_temp_file = None
+            self.active_vault_file = None
+            CustomMessageBox(self, "Hata", f"Dosya açılamadı:\n{e}", "error")
 
     def save_and_close_active_file(self):
         if not self.active_temp_file or not self.active_vault_file:
             return
             
-        self.show_progress("Değişiklikler okunuyor... (%20)", 20)
-
-        def background_save():
-            try:
-                self.update_progress(50, "Şifrelenip kasaya kaydediliyor... (%50)")
-                with open(self.active_temp_file, "rb") as f:
-                    new_data = f.read()
+        try:
+            with open(self.active_temp_file, "rb") as f:
+                new_data = f.read()
+            
+            enc_data = encrypt_bytes(new_data, self.vault_password)
+            with open(self.active_vault_file, "wb") as f:
+                f.write(enc_data)
                 
-                enc_data = encrypt_bytes(new_data, self.vault_password)
-                with open(self.active_vault_file, "wb") as f:
-                    f.write(enc_data)
-                    
-                if os.path.exists(self.active_temp_file):
-                    os.remove(self.active_temp_file)
-                    
-                def finish_save():
-                    self.update_progress(100, "Tamamlandı! (%100)")
-                    self.hide_progress()
-                    self.active_temp_file = None
-                    self.active_vault_file = None
-                    self.frame_active.pack_forget()
-                    CustomMessageBox(self, "Başarılı", "Değişiklikler kaydedildi ve geçici dosya temizlendi.", "info")
-                    self.refresh_vault_files()
-                self.after(0, finish_save)
-            except Exception as e:
-                def err_save():
-                    self.hide_progress()
-                    CustomMessageBox(self, "Hata", f"Kaydedilirken hata oluştu:\n{e}", "error")
-                self.after(0, err_save)
-
-        threading.Thread(target=background_save, daemon=True).start()
+            if os.path.exists(self.active_temp_file):
+                os.remove(self.active_temp_file)
+                
+            self.active_temp_file = None
+            self.active_vault_file = None
+            self.frame_active.pack_forget()
+            CustomMessageBox(self, "Başarılı", "Değişiklikler kaydedildi ve geçici dosya temizlendi.", "info")
+            self.refresh_vault_files()
+        except Exception as e:
+            CustomMessageBox(self, "Hata", f"Kaydedilirken hata oluştu:\n{e}", "error")
 
     def close_without_saving_active_file(self):
         if self.active_temp_file and os.path.exists(self.active_temp_file):
@@ -776,32 +777,15 @@ class SecureVaultApp(ctk.CTk):
         if not save_path:
             return
 
-        self.show_progress("Dosya dışa aktarılıyor... (%20)", 20)
-        self.btn_export_file.configure(state="disabled")
-
-        def background_export():
-            try:
-                self.update_progress(50, "Şifre çözülüyor ve kaydediliyor... (%50)")
-                with open(enc_file_path, "rb") as f:
-                    enc_data = f.read()
-                dec_data = decrypt_bytes(enc_data, self.vault_password)
-                with open(save_path, "wb") as f:
-                    f.write(dec_data)
-                
-                def finish_export():
-                    self.update_progress(100, "Tamamlandı! (%100)")
-                    self.hide_progress()
-                    self.btn_export_file.configure(state="normal")
-                    CustomMessageBox(self, "Başarılı", "Dosya başarıyla şifresiz olarak dışa aktarıldı.", "info")
-                self.after(0, finish_export)
-            except Exception as e:
-                def err_export():
-                    self.hide_progress()
-                    self.btn_export_file.configure(state="normal")
-                    CustomMessageBox(self, "Hata", f"Dışa aktarma hatası:\n{e}", "error")
-                self.after(0, err_export)
-
-        threading.Thread(target=background_export, daemon=True).start()
+        try:
+            with open(enc_file_path, "rb") as f:
+                enc_data = f.read()
+            dec_data = decrypt_bytes(enc_data, self.vault_password)
+            with open(save_path, "wb") as f:
+                f.write(dec_data)
+            CustomMessageBox(self, "Başarılı", "Dosya başarıyla şifresiz olarak dışa aktarıldı.", "info")
+        except Exception as e:
+            CustomMessageBox(self, "Hata", f"Dışa aktarma hatası:\n{e}", "error")
 
     def delete_file_from_vault(self):
         selected_file_rel = self.radio_var.get()
